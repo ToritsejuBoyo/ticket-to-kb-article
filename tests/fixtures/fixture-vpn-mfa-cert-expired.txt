@@ -1,0 +1,42 @@
+================================================================================
+SERVICE DESK INCIDENT REPORT - INC0481920
+================================================================================
+Ticket Number: INC0481920
+Customer: mock-sarah.chen@synthetic-test.local
+Phone: +1-555-0144
+Assigned Engineer: mock-tech-rachel@synthetic-test.local
+Device Hostname: LAPTOP-SF-8812.synthetic-test.local
+Client IP: 198.51.100.12
+VPN Gateway: 203.0.113.50 (vpn-gw01.synthetic-test.local)
+Category: Network / Remote Access
+Priority: High
+
+INITIAL SYMPTOMS:
+User Sarah Chen states remote access VPN fails during morning sign-in.
+The Cisco AnyConnect / Secure Client client initializes, prompts for Azure MFA push,
+user approves MFA notification on mobile, but VPN immediately terminates with:
+"Authentication failed: client certificate invalid or expired. Contact your system administrator."
+
+WORK NOTES & TROUBLESHOOTING:
+- 2026-11-03 08:30 EST - Tech Rachel: Connected to user machine via Remote Assistance.
+- 2026-11-03 08:35 EST - Opened certmgr.msc (Current User Certificate Store).
+  Navigated to Certificates - Current User > Personal > Certificates.
+  Identified User Authentication Certificate issued by 'Enterprise-SubCA-01.synthetic-test.local'.
+  Status: Expired on 2026-11-01 23:59:59 UTC.
+- 2026-11-03 08:42 EST - Attempted manual certificate renewal via Certificate MMC snap-in.
+  Received RPC error 0x800706BA because user was off-network and cannot reach on-prem Issuing CA RPC endpoints.
+- 2026-11-03 08:50 EST - Implemented temporary bypass:
+  Configured temporary fallback VPN tunnel group 'Emergency-CloudMFA-Profile' which validates Azure AD SAML assertion instead of machine certificate.
+  User successfully authenticated to emergency VPN tunnel.
+- 2026-11-03 09:05 EST - Once connected to emergency tunnel, ran certificate auto-enrollment command in elevated PowerShell:
+  certutil -pulse
+  Restart-Service CryptSvc
+- 2026-11-03 09:12 EST - Verified new certificate issued with validity through 2027-11-03.
+- 2026-11-03 09:18 EST - Disconnected emergency VPN. Tested primary corporate VPN profile 'Corp-Standard-VPN'.
+  Authentication succeeded seamlessly using renewed client certificate.
+
+ROOT CAUSE:
+Client certificate reached its 1-year expiration date while user was working remotely for 3 weeks without connecting to enterprise network, preventing scheduled Active Directory Certificate Services (AD CS) auto-enrollment.
+
+VERIFICATION:
+Tested connection from primary profile. Ping to internal resource 192.0.2.10 successful. Status: Closed.

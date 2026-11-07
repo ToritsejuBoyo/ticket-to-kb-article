@@ -1,0 +1,39 @@
+================================================================================
+IT SERVICE TICKET - REQ0039182
+================================================================================
+Ticket: REQ0039182
+Date: 2026-11-05 14:22:10 UTC
+Status: Resolved
+Requester: Elena Rostova <mock-elena.rostova@synthetic-test.local>
+Phone: +1-555-0188
+Department: Finance Operations
+Device: LAPTOP-NYC-4029.synthetic-test.local
+Device ID: 00000000-0000-4000-a000-000000000042
+OS: Windows 11 Enterprise 22H2
+Assigned Tech: mock-tech-sam@synthetic-test.local
+
+DESCRIPTION OF PROBLEM:
+User reported that following a prompt from Dell Command Update to reboot for a system firmware update, the laptop restarted directly into a blue screen displaying:
+"BitLocker - Enter the recovery key for this drive"
+The user does not have the 48-digit numerical recovery password and is locked out of the operating system.
+
+TECHNICAL NOTES & RESOLUTION:
+1. Contacted user by telephone to verify identity following Corporate IT Security Verification Procedure (verified employee ID #49201 and manager confirmation).
+2. Accessed Microsoft Entra admin center (https://entra.microsoft.com) > Devices > All Devices.
+   Located device LAPTOP-NYC-4029 by Object ID 00000000-0000-4000-a000-000000000042.
+   Retrieved BitLocker Key ID 11111111-2222-3333-4444-555555555555 and 48-digit Recovery Key:
+   123456-789012-345678-901234-567890-123456-789012-345678
+3. Read recovery key to user over verified phone line. User entered recovery key and Windows successfully loaded desktop.
+4. Investigated root cause of BitLocker trip:
+   Checked Event Viewer > Applications and Services Logs > Microsoft > Windows > BitLocker-API > Management.
+   Found Event ID 834: "BitLocker determined that the TCG log is invalid for TPM 2.0 PCR[7] binding."
+   The Dell BIOS update from version 1.14.0 to 1.18.1 modified the UEFI Secure Boot PCR 7 hash table without temporarily suspending BitLocker protection.
+5. Remediated PCR binding drift to prevent BitLocker prompt on subsequent reboots:
+   Opened Administrator PowerShell console and executed:
+   Suspend-BitLocker -MountPoint "C:" -RebootCount 1
+   Restart-Computer
+6. Following reboot, BitLocker automatically resumed encryption and sealed the TPM with the new firmware measurements.
+7. Executed verification command:
+   Get-BitLockerVolume -MountPoint "C:" | Select-Object MountPoint, VolumeStatus, ProtectionStatus, KeyProtector
+   ProtectionStatus returned 'On' with 'Tpm' and 'RecoveryPassword' protectors active.
+8. Initiated second test reboot. Laptop booted directly to Windows login screen without prompting for recovery key.

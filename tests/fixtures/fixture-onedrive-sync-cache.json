@@ -1,0 +1,61 @@
+{
+  "key": "ITSD-4821",
+  "fields": {
+    "summary": "OneDrive sync client stuck on Signing In with error code 0x8004de40",
+    "description": "User mock-marcus.vance@synthetic-test.local reported that Microsoft OneDrive client for Windows displays continuous 'Signing in' state with blue spinning icon, eventually failing with 'There was a problem signing you in. Try again in a few minutes. (Error Code: 0x8004de40)'. File Explorer sync status indicators show gray pause icons.",
+    "issuetype": {
+      "name": "Incident"
+    },
+    "priority": {
+      "name": "Medium"
+    },
+    "reporter": {
+      "name": "mock-marcus.vance@synthetic-test.local",
+      "displayName": "Marcus Vance",
+      "emailAddress": "mock-marcus.vance@synthetic-test.local"
+    },
+    "assignee": {
+      "name": "mock-tech-david@synthetic-test.local",
+      "displayName": "David Miller",
+      "emailAddress": "mock-tech-david@synthetic-test.local"
+    },
+    "components": [
+      {
+        "name": "Cloud Storage"
+      },
+      {
+        "name": "OneDrive"
+      }
+    ],
+    "environment": "Windows 11 Enterprise 23H2, OneDrive Build 24.181.0908.0001, Device DESKTOP-ATL-9921.synthetic-test.local, IP 192.0.2.78",
+    "comment": {
+      "comments": [
+        {
+          "author": {
+            "name": "mock-tech-david@synthetic-test.local"
+          },
+          "created": "2026-11-04T11:20:00.000+0000",
+          "body": "Checked network connectivity to login.microsoftonline.com and oneclient.sfbassets.com. TLS 1.2 handshake was successful. Verified user account is active and licensed for SharePoint/OneDrive Plan 2 in Microsoft 365 Admin Center."
+        },
+        {
+          "author": {
+            "name": "mock-tech-david@synthetic-test.local"
+          },
+          "created": "2026-11-04T11:45:00.000+0000",
+          "body": "Inspected Windows Credential Manager under Control Panel > Credential Manager > Windows Credentials. Found multiple orphaned entries for 'OneDrive Cached Credential' and 'MicrosoftOffice16_Data:ADAL'. Unlinked account in OneDrive Settings > Account, but error persisted."
+        },
+        {
+          "author": {
+            "name": "mock-tech-david@synthetic-test.local"
+          },
+          "created": "2026-11-04T12:10:00.000+0000",
+          "body": "Performed full OneDrive client reset using command:\n%localappdata%\\Microsoft\\OneDrive\\onedrive.exe /reset\nWaited 2 minutes, then manually relaunched OneDrive:\n%localappdata%\\Microsoft\\OneDrive\\onedrive.exe\nCleared Microsoft.AAD.BrokerPlugin cache located at:\n%LOCALAPPDATA%\\Packages\\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\\AC\\TokenBroker\\Accounts"
+        }
+      ]
+    },
+    "resolution": {
+      "name": "Done",
+      "description": "OneDrive client reset cleared corrupt WAM token broker cache. User prompted for fresh modern auth sign-in and sync completed normally."
+    }
+  }
+}

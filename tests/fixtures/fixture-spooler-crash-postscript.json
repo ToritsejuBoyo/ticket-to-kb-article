@@ -1,0 +1,62 @@
+{
+  "ticket": {
+    "id": 849201,
+    "url": "https://synthetic-service-desk.zendesk.com/api/v2/tickets/849201.json",
+    "external_id": null,
+    "type": "incident",
+    "subject": "Print Spooler service terminates automatically on print server PRINT-CORP-01",
+    "raw_subject": "Print Spooler service terminates automatically on print server PRINT-CORP-01",
+    "description": "Multiple branch office users report unable to print to shared network printer 'HQ-FLOOR3-COLOR'. When investigating print server PRINT-CORP-01.synthetic-test.local (IP 192.0.2.15), the Print Spooler service (spoolsv.exe) is in a Stopped state. Manual attempts to start the service succeed for approximately 5 minutes before stopping again.",
+    "priority": "urgent",
+    "status": "solved",
+    "recipient": "mock-support@synthetic-test.local",
+    "requester_id": 990182,
+    "submitter_id": 990182,
+    "assignee_id": 771203,
+    "organization_id": 441029,
+    "group_id": 128394,
+    "collaborator_ids": [],
+    "forum_topic_id": null,
+    "problem_id": null,
+    "has_incidents": false,
+    "is_public": true,
+    "due_at": null,
+    "tags": [
+      "print_spooler",
+      "spoolsv_exe",
+      "hp_driver",
+      "crash",
+      "server_infra"
+    ],
+    "custom_fields": [
+      {
+        "id": 360012847192,
+        "value": "PRINT-CORP-01.synthetic-test.local"
+      },
+      {
+        "id": 360012847193,
+        "value": "192.0.2.15"
+      }
+    ],
+    "comments": [
+      {
+        "id": 12049182391,
+        "type": "Comment",
+        "author_id": 771203,
+        "author_email": "mock-tech-jordan@synthetic-test.local",
+        "body": "Connected to PRINT-CORP-01 via administrative session. Inspected Windows Event Viewer > Windows Logs > Application.\nFound Event ID 1000, Application Error:\nFaulting application name: spoolsv.exe, version: 10.0.20348.1907\nFaulting module name: hpz3r500.dll, version: 0.3.1537.404\nException code: 0xc0000005 (Access Violation)\nFault offset: 0x00000000000491a2\n\nThe crash correlates exactly with a large PDF print job submitted with complex vector gradients.",
+        "public": false,
+        "created_at": "2026-11-06T15:30:00Z"
+      },
+      {
+        "id": 12049182455,
+        "type": "Comment",
+        "author_id": 771203,
+        "author_email": "mock-tech-jordan@synthetic-test.local",
+        "body": "Remediation executed:\n1. Stopped spooler service and flushed corrupted print job spool files:\n   Stop-Service -Name Spooler -Force\n   Remove-Item -Path 'C:\\Windows\\System32\\spool\\PRINTERS\\*.*' -Force\n2. Identified printer queue 'HQ-FLOOR3-COLOR' was using legacy Version 3 OEM driver 'HP Color LaserJet Enterprise M553 PCL6'.\n3. Replaced driver with modern Type-4 Class Driver 'Microsoft Enhanced Point and Print Compatibility Driver'.\n4. Removed offending driver package using pnputil:\n   pnputil /delete-driver oem44.inf /uninstall /force\n5. Started Print Spooler service:\n   Start-Service -Name Spooler\n6. Sent test calibration page and 50-page complex PDF document. Print Spooler remained stable and memory usage stayed under 45 MB.",
+        "public": false,
+        "created_at": "2026-11-06T16:15:00Z"
+      }
+    ]
+  }
+}

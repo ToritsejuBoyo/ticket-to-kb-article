@@ -1,0 +1,17 @@
+{
+  "number": "INC0928101",
+  "sys_id": "00000000-0000-4000-a000-000000000101",
+  "short_description": "Outlook cannot connect to Exchange mailbox after hybrid migration with error 0x8004010F",
+  "description": "User mock-alex.rivera@synthetic-test.local reported that Outlook desktop app fails to connect to mailbox following the weekend Exchange Online migration. The error dialogue displays: 'The operation failed. An object cannot be found. Error 0x8004010F'. Webmail (Outlook on the Web) works correctly.",
+  "category": "Software",
+  "subcategory": "Email / Outlook",
+  "caller_id": "mock-alex.rivera@synthetic-test.local",
+  "caller_phone": "+1-555-0199",
+  "assigned_to": "mock-tech-kevin@synthetic-test.local",
+  "workstation": "WORKSTATION-LON-01.synthetic-test.local",
+  "client_ip": "192.0.2.45",
+  "work_notes": "2026-11-02 09:14 - Tech Kevin: Contacted user via Teams. Confirmed OWA is functional. Tested Autodiscover endpoint using Test E-mail AutoConfiguration in Outlook tray icon. Autodiscover is attempting to pull legacy on-premises Exchange 2016 Autodiscover.xml instead of autodiscover-s.outlook.com.\n2026-11-02 09:35 - Tech Kevin: Checked Windows Credential Manager. Found cached legacy credentials under Generic Credentials for MS.Outlook.15:alex.rivera@synthetic-test.local. Removed stale credentials.\n2026-11-02 09:50 - Tech Kevin: Outlook profile was still binding to legacy Offline Address Book (OAB) URL. Closed Outlook. Navigated to %LOCALAPPDATA%\\Microsoft\\Outlook\\Offline Address Books and removed existing OAB folders. Recreated mail profile via Control Panel > Mail (Microsoft Outlook) > Show Profiles > Add 'Outlook_Modern'.",
+  "close_notes": "Created new Outlook profile 'Outlook_Modern' configured with Modern Authentication. Outlook connected directly to Exchange Online via Autodiscover. All mail folders synchronized successfully. Error 0x8004010F resolved.",
+  "resolution_code": "Solved (Permanently)",
+  "closed_at": "2026-11-02 10:15:00"
+}
