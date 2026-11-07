@@ -69,24 +69,24 @@ class Sanitizer:
         r"\b::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}\b"
     )
 
-    # Workstation / Server hostnames
+    # Workstation / Server hostnames (bounded RFC 1035 labels to prevent ReDoS)
     HOSTNAME_PATTERN = re.compile(
-        r"\b(?:WORKSTATION|DESKTOP|LAPTOP|SERVER|SRV|PRINT|DC|FS|EXCH|GW)-[A-Z0-9_-]+(?:\.[a-zA-Z0-9_.-]+)?\b",
+        r"\b(?:WORKSTATION|DESKTOP|LAPTOP|SERVER|SRV|PRINT|DC|FS|EXCH|GW)-[A-Z0-9_-]{1,63}(?:\.[a-zA-Z0-9_.-]{1,63})?\b",
         re.IGNORECASE
     )
 
-    # Corporate internal domains
+    # Corporate internal domains (bounded RFC 1035 labels to prevent ReDoS)
     CORP_DOMAIN_PATTERN = re.compile(
-        r"\b[a-zA-Z0-9_-]+(?:\.corp|\.internal|\.local|\.synthetic-test\.local)\b",
+        r"\b[a-zA-Z0-9_-]{1,63}(?:\.corp|\.internal|\.local|\.synthetic-test\.local)\b",
         re.IGNORECASE
     )
 
     # Credentials, secrets, tokens, passwords
     CREDENTIAL_PATTERNS = [
         re.compile(r"\b\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}\b"),  # 48-digit BitLocker key
-        re.compile(r"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret)\s*[:=]\s*['\"]?([^\s'\",;]+)['\"]?"),
-        re.compile(r"(?i)-(?:password|secret|token|api_key|client_secret|pass)\s+['\"]?([^\s'\"]+)['\"]?"),
-        re.compile(r"\b(?:bearer\s+[a-zA-Z0-9_\-\.]{20,})\b", re.IGNORECASE),
+        re.compile(r"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret)\s*[:=]\s*['\"]?([^\s'\",;]{1,256})['\"]?"),
+        re.compile(r"(?i)-(?:password|secret|token|api_key|client_secret|pass)\s+['\"]?([^\s'\"]{1,256})['\"]?"),
+        re.compile(r"\b(?:bearer\s+[a-zA-Z0-9_\-\.]{20,512})\b", re.IGNORECASE),
     ]
 
     # Greeting / Signature lines revealing personal names
@@ -105,6 +105,11 @@ class Sanitizer:
         re.compile(r"^(?:Requester|Customer):\s*([A-Za-z\s]+)<", re.MULTILINE),
         re.compile(r'"displayName":\s*"([^"]+)"'),
     ]
+
+    # Rule 7 Enterprise compliance: scrub casual or customer-submitted emojis
+    EMOJI_PATTERN = re.compile(
+        r"[\U00010000-\U0010ffff]|[\u2600-\u27bf]|[\u2300-\u23ff]|[\u2b50-\u2b55]"
+    )
 
     def __init__(self, salt: str = "kcs-sanitizer-salt") -> None:
         self.salt = salt
@@ -182,39 +187,47 @@ class Sanitizer:
         # Auto-discover names from headers if present
         self.discover_names(text)
 
-        # 1. Scrub credentials and BitLocker recovery keys first
+        # 1. Neutralize pseudo-protocol URIs and dangerous script execution schemes
+        text = re.sub(r"(?i)\bjavascript\s*:", "[BLOCKED_SCRIPT]:", text)
+        text = re.sub(r"(?i)\bvbs(?:cript)?\s*:", "[BLOCKED_SCRIPT]:", text)
+        text = re.sub(r"(?i)\bdata:\s*text/html", "[BLOCKED_DATA]:", text)
+
+        # 2. Scrub credentials and BitLocker recovery keys first
         for pattern in self.CREDENTIAL_PATTERNS:
             text = pattern.sub("[REDACTED_CREDENTIAL]", text)
 
-        # 2. Scrub emails
+        # 3. Scrub emails
         text = self.EMAIL_PATTERN.sub(self._mask_email, text)
 
-        # 3. Scrub GUIDs BEFORE phone numbers to prevent phone regex partial match
+        # 4. Scrub GUIDs BEFORE phone numbers to prevent phone regex partial match
         text = self.GUID_PATTERN.sub("00000000-0000-4000-a000-000000000000", text)
 
-        # 4. Scrub phone numbers
+        # 5. Scrub phone numbers
         text = self.PHONE_PATTERN.sub("[REDACTED_PHONE]", text)
 
-        # 5. Scrub registered personal names (whole words)
+        # 6. Scrub registered personal names (whole words)
         for name in sorted(self._custom_names, key=len, reverse=True):
             name_re = re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
             text = name_re.sub("[User]", text)
 
-        # 6. Scrub IPv4 addresses
+        # 7. Scrub IPv4 addresses
         text = self.IPV4_PATTERN.sub(self._mask_ipv4, text)
 
-        # 7. Scrub IPv6 addresses
+        # 8. Scrub IPv6 addresses
         text = self.IPV6_PATTERN.sub("2001:db8::1", text)
 
-        # 8. Scrub hostnames
+        # 9. Scrub hostnames
         text = self.HOSTNAME_PATTERN.sub(self._mask_hostname, text)
 
-        # 9. Scrub internal corporate domain references
+        # 10. Scrub internal corporate domain references
         text = self.CORP_DOMAIN_PATTERN.sub("contoso.local", text)
 
-        # 10. Scrub greeting and signature personal names
+        # 11. Scrub greeting and signature personal names
         text = self.GREETING_PATTERN.sub("Hi [User],", text)
         text = self.SIGNATURE_PATTERN.sub("Regards,\n[Service Desk Engineer]", text)
+
+        # 12. Scrub any residual emoji characters to enforce Rule 7 compliance
+        text = self.EMOJI_PATTERN.sub("", text)
 
         return text
 
@@ -277,6 +290,10 @@ class TicketParser:
         if not content:
             return TicketData(title="Empty Ticket Input", symptoms=["No input content provided."])
 
+        # Strip UTF-8 BOM if present at start
+        if content.startswith("\ufeff"):
+            content = content[1:].strip()
+
         # Attempt JSON detection
         if source_type == "json" or (source_type == "auto" and (content.startswith("{") and content.endswith("}"))):
             try:
@@ -292,7 +309,7 @@ class TicketParser:
                         return self._parse_zendesk(data)
                     else:
                         return self._parse_generic_json(data)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
                 pass  # Fall back to plaintext parser
 
         return self._parse_plaintext(content)
@@ -390,10 +407,12 @@ class TicketParser:
         ticket = TicketData()
         ticket.ticket_id = str(data.get("key", "ITSD-0000"))
         fields = data.get("fields", {})
+        if not isinstance(fields, dict):
+            fields = {}
         ticket.title = str(fields.get("summary", "Jira Service Incident"))
 
         comps = fields.get("components", [])
-        if comps and isinstance(comps, list):
+        if comps and isinstance(comps, list) and isinstance(comps[0], dict):
             ticket.category = comps[0].get("name", "Service Desk")
         ticket.environment = str(fields.get("environment", "Standard Managed Endpoint"))
 
@@ -403,21 +422,22 @@ class TicketParser:
         comments_obj = fields.get("comment", {})
         comment_list = comments_obj.get("comments", []) if isinstance(comments_obj, dict) else []
         notes_lines = [desc]
-        for c in comment_list:
-            if isinstance(c, dict):
-                body = c.get("body", "")
-                notes_lines.append(body)
-                for line in body.splitlines():
-                    clean = self._clean_step(line)
-                    if clean and ("command" in clean.lower() or "reset" in clean.lower() or "cleared" in clean.lower() or clean.startswith("%")):
-                        ticket.resolution_steps.append(clean)
+        if isinstance(comment_list, list):
+            for c in comment_list:
+                if isinstance(c, dict):
+                    body = str(c.get("body", ""))
+                    notes_lines.append(body)
+                    for line in body.splitlines():
+                        clean = self._clean_step(line)
+                        if clean and ("command" in clean.lower() or "reset" in clean.lower() or "cleared" in clean.lower() or clean.startswith("%")):
+                            ticket.resolution_steps.append(clean)
 
         res_obj = fields.get("resolution", {})
         if isinstance(res_obj, dict):
             res_desc = res_obj.get("description", "")
             if res_desc:
                 ticket.cause = res_desc
-                ticket.resolution_steps.append(self._clean_step(res_desc))
+                ticket.resolution_steps.append(self._clean_step(str(res_desc)))
 
         ticket.raw_notes = "\n\n".join(notes_lines)
         errors, commands = self._extract_errors_and_commands(ticket.raw_notes)
@@ -517,30 +537,60 @@ class TicketParser:
 
             lower_line = line_str.lower()
 
-            # Section header matching
+            # Check for inline sections (header and value on the same line, e.g. 'Symptoms: something')
+            if lower_line.startswith(("initial symptoms:", "symptoms:", "description:", "description of problem:", "issue:")):
+                current_section = "symptoms"
+                collecting_cause_block = False
+                val = line_str.split(":", 1)[1].strip()
+                if val:
+                    clean = self._clean_step(val)
+                    if clean:
+                        ticket.symptoms.append(clean)
+                continue
+            elif lower_line.startswith(("root cause:", "cause:")):
+                current_section = "cause"
+                collecting_cause_block = False
+                val = line_str.split(":", 1)[1].strip()
+                if val:
+                    clean = self._clean_step(val)
+                    if clean:
+                        ticket.cause = clean
+                continue
+            elif lower_line.startswith(("remediation executed:", "remediation:", "resolution:", "resolution steps:")):
+                current_section = "resolution"
+                collecting_cause_block = False
+                val = line_str.split(":", 1)[1].strip()
+                if val:
+                    clean = self._clean_step(val)
+                    if clean:
+                        ticket.resolution_steps.append(clean)
+                continue
+            elif lower_line.startswith(("verification:", "validation:")):
+                current_section = "verification"
+                collecting_cause_block = False
+                val = line_str.split(":", 1)[1].strip()
+                if val:
+                    clean = self._clean_step(val)
+                    if clean:
+                        ticket.verification = clean
+                continue
+
+            # Section header matching on separate lines
             if symptoms_header_re.match(line_str):
                 current_section = "symptoms"
                 collecting_cause_block = False
                 continue
-            elif cause_header_re.match(line_str) or lower_line.startswith(("root cause:", "cause:")):
+            elif cause_header_re.match(line_str):
                 current_section = "cause"
                 collecting_cause_block = False
-                if ":" in line_str:
-                    val = line_str.split(":", 1)[1].strip()
-                    if val:
-                        ticket.cause = val
                 continue
-            elif resolution_header_re.match(line_str) or lower_line.startswith(("remediation executed:", "resolution:")):
+            elif resolution_header_re.match(line_str):
                 current_section = "resolution"
                 collecting_cause_block = False
                 continue
-            elif verification_header_re.match(line_str) or lower_line.startswith(("verification:", "validation:")):
+            elif verification_header_re.match(line_str):
                 current_section = "verification"
                 collecting_cause_block = False
-                if ":" in line_str:
-                    val = line_str.split(":", 1)[1].strip()
-                    if val:
-                        ticket.verification = val
                 continue
 
             # Header metadata matching
