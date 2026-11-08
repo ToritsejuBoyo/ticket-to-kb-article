@@ -35,18 +35,24 @@ class Sanitizer:
     """
     Deterministic client-side sanitization engine.
     Scrubs PII, user identifiers, email addresses, phone numbers,
-    internal IP addresses, internal FQDNs, machine names, and credentials.
+    internal IP addresses, MAC addresses, internal FQDNs, machine names,
+    cloud API tokens, credit cards, SSNs, and credentials.
     """
 
-    # Bounded RFC 5321 regex to avoid polynomial ReDoS backtracking
+    # Bounded RFC 5321 regex to avoid polynomial ReDoS backtracking (excludes SPN slash prefix)
     EMAIL_PATTERN = re.compile(
-        r"(?<![\w._%+-])[\w._%+-]{1,64}@[\w.-]{1,255}\.[\w-]{2,24}\b",
+        r"(?<![\w._%+-/])[\w._%+-]{1,64}@[\w.-]{1,255}\.[\w-]{2,24}\b",
         re.UNICODE
     )
 
     # Standard GUID / UUID (executed before phone numbers to prevent collision)
     GUID_PATTERN = re.compile(
         r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+    )
+
+    # MAC addresses (IEEE 802 colon, hyphen, or Cisco dot notation)
+    MAC_PATTERN = re.compile(
+        r"\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b|\b[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\b"
     )
 
     # Phone numbers: North American, international, 7-digit local (strict negative lookarounds)
@@ -62,11 +68,12 @@ class Sanitizer:
         r"\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b"
     )
 
-    # IPv6 addresses (full and compressed)
+    # IPv6 addresses (full, compressed, link-local, and zone indexed)
     IPV6_PATTERN = re.compile(
-        r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|"
-        r"\b(?:[0-9a-fA-F]{1,4}:){1,7}:[0-9a-fA-F]{1,4}\b|"
-        r"\b::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}\b"
+        r"\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}(?:%[a-zA-Z0-9_.-]+)?\b|"
+        r"\b(?:[0-9a-fA-F]{1,4}:){1,7}:[0-9a-fA-F]{1,4}(?:%[a-zA-Z0-9_.-]+)?\b|"
+        r"\b::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}(?:%[a-zA-Z0-9_.-]+)?\b|"
+        r"\bfe80::[0-9a-fA-F:]*(?:%[a-zA-Z0-9_.-]+)?\b"
     )
 
     # Workstation / Server hostnames (bounded RFC 1035 labels to prevent ReDoS)
@@ -81,9 +88,19 @@ class Sanitizer:
         re.IGNORECASE
     )
 
-    # Credentials, secrets, tokens, passwords
+    # Active Directory Kerberos Service Principal Names (SPNs)
+    SPN_PATTERN = re.compile(
+        r"\b([A-Za-z0-9_-]{2,32})/([a-zA-Z0-9_.-]{1,128})@([A-Za-z0-9_.-]{1,128})\b"
+    )
+
+    # Credentials, secrets, cloud tokens, passwords, credit cards, SSNs
     CREDENTIAL_PATTERNS = [
         re.compile(r"\b\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}-\d{6}\b"),  # 48-digit BitLocker key
+        re.compile(r"\bAKIA[0-9A-Z]{16}\b"),  # AWS Access Key ID
+        re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,255}\b"),  # GitHub Personal Access Token
+        re.compile(r"\bxox[baprs]-[0-9a-zA-Z]{10,48}\b"),  # Slack Token
+        re.compile(r"\b(?:\d{4}[- ]){3}\d{4}\b|\b\d{16}\b"),  # 16-digit credit card pattern
+        re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),  # Social Security Number
         re.compile(r"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|client[_-]?secret)\s*[:=]\s*['\"]?([^\s'\",;]{1,256})['\"]?"),
         re.compile(r"(?i)-(?:password|secret|token|api_key|client_secret|pass)\s+['\"]?([^\s'\"]{1,256})['\"]?"),
         re.compile(r"\b(?:bearer\s+[a-zA-Z0-9_\-\.]{20,512})\b", re.IGNORECASE),
@@ -192,41 +209,50 @@ class Sanitizer:
         text = re.sub(r"(?i)\bvbs(?:cript)?\s*:", "[BLOCKED_SCRIPT]:", text)
         text = re.sub(r"(?i)\bdata:\s*text/html", "[BLOCKED_DATA]:", text)
 
-        # 2. Scrub credentials and BitLocker recovery keys first
+        # 2. Scrub GUIDs early (36-char fixed format) to prevent collision with numeric patterns
+        text = self.GUID_PATTERN.sub("00000000-0000-4000-a000-000000000000", text)
+
+        # 3. Scrub credentials, cloud API keys, and BitLocker keys
         for pattern in self.CREDENTIAL_PATTERNS:
             text = pattern.sub("[REDACTED_CREDENTIAL]", text)
 
-        # 3. Scrub emails
+        # 4. Scrub Kerberos SPNs (service/host@REALM) before email pattern to prevent false email match
+        def _mask_spn(m: re.Match) -> str:
+            svc = m.group(1)
+            return f"{svc}/SERVER-01.contoso.local@CONTOSO.LOCAL"
+        text = self.SPN_PATTERN.sub(_mask_spn, text)
+
+        # 5. Scrub emails
         text = self.EMAIL_PATTERN.sub(self._mask_email, text)
 
-        # 4. Scrub GUIDs BEFORE phone numbers to prevent phone regex partial match
-        text = self.GUID_PATTERN.sub("00000000-0000-4000-a000-000000000000", text)
+        # 6. Scrub MAC addresses (RFC 7042 documentation address)
+        text = self.MAC_PATTERN.sub("00:00:5E:00:53:01", text)
 
-        # 5. Scrub phone numbers
+        # 7. Scrub phone numbers
         text = self.PHONE_PATTERN.sub("[REDACTED_PHONE]", text)
 
-        # 6. Scrub registered personal names (whole words)
+        # 7. Scrub registered personal names (whole words)
         for name in sorted(self._custom_names, key=len, reverse=True):
             name_re = re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
             text = name_re.sub("[User]", text)
 
-        # 7. Scrub IPv4 addresses
+        # 8. Scrub IPv4 addresses
         text = self.IPV4_PATTERN.sub(self._mask_ipv4, text)
 
-        # 8. Scrub IPv6 addresses
+        # 9. Scrub IPv6 addresses
         text = self.IPV6_PATTERN.sub("2001:db8::1", text)
 
-        # 9. Scrub hostnames
+        # 10. Scrub hostnames
         text = self.HOSTNAME_PATTERN.sub(self._mask_hostname, text)
 
-        # 10. Scrub internal corporate domain references
+        # 11. Scrub internal corporate domain references
         text = self.CORP_DOMAIN_PATTERN.sub("contoso.local", text)
 
-        # 11. Scrub greeting and signature personal names
+        # 12. Scrub greeting and signature personal names
         text = self.GREETING_PATTERN.sub("Hi [User],", text)
         text = self.SIGNATURE_PATTERN.sub("Regards,\n[Service Desk Engineer]", text)
 
-        # 12. Scrub any residual emoji characters to enforce Rule 7 compliance
+        # 13. Scrub any residual emoji characters to enforce Rule 7 compliance
         text = self.EMOJI_PATTERN.sub("", text)
 
         return text
@@ -258,18 +284,24 @@ class TicketData:
 class TicketParser:
     """
     Multi-format ticket parser supporting ServiceNow JSON, Jira Service
-    Management JSON, Zendesk JSON, structured text, and freeform logs.
+    Management JSON (including Atlassian Document Format), Zendesk JSON,
+    structured text, and freeform logs.
     """
 
     ERROR_CODE_REGEX = re.compile(
-        r"\b(?:0x[0-9a-fA-F]{8}|Event ID \d+|RPC error 0x[0-9a-fA-F]+|status code \d{3}|HTTP \d{3})\b",
+        r"(?:0x[0-9a-fA-F]{8}|Event\s*ID\s*[:>]?\s*\d+|EventID\s*[:>]?\s*\d+|<EventID>\d+</EventID>|RPC error 0x[0-9a-fA-F]+|status code \d{3}|HTTP(?:/\d(?:\.\d)?)?\s+\d{3})",
         re.IGNORECASE
     )
 
     COMMAND_LINE_REGEX = re.compile(
-        r"^(?:\s*)(?:(?:Get|Set|New|Remove|Restart|Stop|Start|Suspend|Resume|Test)-[A-Za-z0-9]+[^\n\r]+|"
+        r"^(?:\s*)(?:(?:Get|Set|New|Remove|Restart|Stop|Start|Suspend|Resume|Test|Clear|Enable|Disable|Update|Install|Uninstall|Invoke|Reset)-[A-Za-z0-9]+[^\n\r]+|"
         r"certutil(?:\.exe)?\s+[^\n\r]+|pnputil(?:\.exe)?\s+/[^\n\r]+|netsh(?:\.exe)?\s+[^\n\r]+|"
         r"DISM(?:\.exe)?\s+[^\n\r]+|sfc(?:\.exe)?\s+[^\n\r]+|"
+        r"ipconfig(?:\.exe)?\s+/[a-zA-Z]+|gpupdate(?:\.exe)?\s+/[a-zA-Z]+|"
+        r"reg(?:\.exe)?\s+(?:add|delete|query)\s+[^\n\r]+|net\s+(?:start|stop)\s+[^\n\r]+|"
+        r"sc(?:\.exe)?\s+(?:query|start|stop|config)\s+[^\n\r]+|"
+        r"systemctl\s+(?:restart|stop|start|status|reload)\s+[a-zA-Z0-9_.-]+|"
+        r"journalctl\s+[^\n\r]+|"
         r"%localappdata%\\[^\n\r]+|Outlook\.exe\s+[^\n\r]+)",
         re.MULTILINE
     )
@@ -282,11 +314,41 @@ class TicketParser:
     def __init__(self, sanitizer: Optional[Sanitizer] = None) -> None:
         self.sanitizer = sanitizer or Sanitizer()
 
+    @classmethod
+    def _extract_adf_text(cls, node: Any) -> str:
+        """
+        Recursively extracts plain text from Atlassian Document Format (ADF) AST.
+        """
+        if isinstance(node, str):
+            return node
+        elif isinstance(node, list):
+            return "\n".join(filter(None, [cls._extract_adf_text(item) for item in node]))
+        elif isinstance(node, dict):
+            node_type = node.get("type")
+            if node_type == "text":
+                return str(node.get("text", ""))
+            elif "content" in node and isinstance(node["content"], list):
+                return cls._extract_adf_text(node["content"])
+        return ""
+
+    @classmethod
+    def _clean_servicenow_markup(cls, text: str) -> str:
+        """
+        Cleans ServiceNow [code] tags and residual HTML elements from work notes.
+        """
+        if not text:
+            return ""
+        cleaned = re.sub(r"\[/?code\]", "", text, flags=re.IGNORECASE)
+        cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+        cleaned = re.sub(r"[ \t]+", " ", cleaned)
+        return cleaned.strip()
+
     def parse(self, raw_content: str, source_type: str = "auto") -> TicketData:
         """
         Parses ticket payload into structured TicketData.
         """
-        content = raw_content.strip()
+        # Normalize Windows CRLF and classic Mac CR line endings
+        content = raw_content.replace("\r\n", "\n").replace("\r", "\n").strip()
         if not content:
             return TicketData(title="Empty Ticket Input", symptoms=["No input content provided."])
 
@@ -315,7 +377,20 @@ class TicketParser:
         return self._parse_plaintext(content)
 
     def _extract_errors_and_commands(self, text: str) -> Tuple[List[str], List[str]]:
-        errors = list(dict.fromkeys(self.ERROR_CODE_REGEX.findall(text)))
+        raw_errors = self.ERROR_CODE_REGEX.findall(text)
+        errors: List[str] = []
+        for err in raw_errors:
+            cleaned = err.strip()
+            evt_m = re.search(r"Event(?:\s*ID|ID)?[:>\s]*(\d+)", cleaned, re.IGNORECASE)
+            if evt_m:
+                errors.append(f"Event ID {evt_m.group(1)}")
+                continue
+            http_m = re.search(r"HTTP(?:/\d(?:\.\d)?)?\s+(\d{3})", cleaned, re.IGNORECASE)
+            if http_m:
+                errors.append(f"HTTP {http_m.group(1)}")
+                continue
+            errors.append(cleaned)
+        errors = list(dict.fromkeys(errors))
         raw_commands = self.COMMAND_LINE_REGEX.findall(text)
         commands: List[str] = []
         for cmd in raw_commands:
@@ -374,9 +449,9 @@ class TicketParser:
             env_parts.append(f"Client IP: {data['client_ip']}")
         ticket.environment = ", ".join(env_parts) if env_parts else "Corporate Enterprise Endpoint"
 
-        desc = str(data.get("description", ""))
-        work_notes = str(data.get("work_notes", ""))
-        close_notes = str(data.get("close_notes", ""))
+        desc = self._clean_servicenow_markup(str(data.get("description", "")))
+        work_notes = self._clean_servicenow_markup(str(data.get("work_notes", "")))
+        close_notes = self._clean_servicenow_markup(str(data.get("close_notes", "")))
 
         ticket.raw_notes = f"{desc}\n\nWork Notes:\n{work_notes}\n\nClose Notes:\n{close_notes}"
         errors, commands = self._extract_errors_and_commands(ticket.raw_notes)
@@ -416,8 +491,13 @@ class TicketParser:
             ticket.category = comps[0].get("name", "Service Desk")
         ticket.environment = str(fields.get("environment", "Standard Managed Endpoint"))
 
-        desc = str(fields.get("description", ""))
-        ticket.symptoms.append(desc)
+        desc_raw = fields.get("description", "")
+        if isinstance(desc_raw, (dict, list)):
+            desc = self._extract_adf_text(desc_raw)
+        else:
+            desc = str(desc_raw or "")
+        if desc:
+            ticket.symptoms.append(desc)
 
         comments_obj = fields.get("comment", {})
         comment_list = comments_obj.get("comments", []) if isinstance(comments_obj, dict) else []
@@ -425,18 +505,22 @@ class TicketParser:
         if isinstance(comment_list, list):
             for c in comment_list:
                 if isinstance(c, dict):
-                    body = str(c.get("body", ""))
+                    body_raw = c.get("body", "")
+                    if isinstance(body_raw, (dict, list)):
+                        body = self._extract_adf_text(body_raw)
+                    else:
+                        body = str(body_raw or "")
                     notes_lines.append(body)
                     for line in body.splitlines():
                         clean = self._clean_step(line)
-                        if clean and ("command" in clean.lower() or "reset" in clean.lower() or "cleared" in clean.lower() or clean.startswith("%")):
+                        if clean and ("command" in clean.lower() or "reset" in clean.lower() or "cleared" in clean.lower() or "action" in clean.lower() or clean.startswith("%")):
                             ticket.resolution_steps.append(clean)
 
         res_obj = fields.get("resolution", {})
         if isinstance(res_obj, dict):
             res_desc = res_obj.get("description", "")
             if res_desc:
-                ticket.cause = res_desc
+                ticket.cause = str(res_desc)
                 ticket.resolution_steps.append(self._clean_step(str(res_desc)))
 
         ticket.raw_notes = "\n\n".join(notes_lines)
@@ -454,20 +538,24 @@ class TicketParser:
         ticket.title = str(data.get("subject", "Zendesk Incident"))
         ticket.category = "Infrastructure / Service"
 
-        desc = str(data.get("description", ""))
-        ticket.symptoms.append(desc)
+        raw_desc = data.get("description", data.get("description_text", ""))
+        desc = self._clean_servicenow_markup(str(raw_desc or ""))
+        if desc:
+            ticket.symptoms.append(desc)
 
-        notes_lines = [desc]
-        comments = data.get("comments", [])
+        notes_lines = [desc] if desc else []
+        comments = data.get("comments", data.get("conversations", []))
         if isinstance(comments, list):
             for c in comments:
                 if isinstance(c, dict):
-                    body = str(c.get("body", ""))
-                    notes_lines.append(body)
-                    for line in body.splitlines():
-                        clean = self._clean_step(line)
-                        if clean and (line.strip().startswith(("1.", "2.", "3.", "4.", "5.")) or "remediation" in clean.lower() or "driver" in clean.lower()):
-                            ticket.resolution_steps.append(clean)
+                    raw_body = c.get("body", c.get("body_text", ""))
+                    body = self._clean_servicenow_markup(str(raw_body or ""))
+                    if body:
+                        notes_lines.append(body)
+                        for line in body.splitlines():
+                            clean = self._clean_step(line)
+                            if clean and (line.strip().startswith(("1.", "2.", "3.", "4.", "5.")) or any(k in clean.lower() for k in ["remediation", "driver", "action", "resolved", "fixed", "cmdkey", "cleared", "restarted", "reset"])):
+                                ticket.resolution_steps.append(clean)
 
         ticket.raw_notes = "\n\n".join(notes_lines)
         errors, commands = self._extract_errors_and_commands(ticket.raw_notes)
@@ -481,7 +569,7 @@ class TicketParser:
 
     def _parse_generic_json(self, data: Dict[str, Any]) -> TicketData:
         ticket = TicketData()
-        ticket.ticket_id = str(data.get("id", data.get("ticket_id", "TICK-1001")))
+        ticket.ticket_id = str(data.get("id", data.get("ticket_id", data.get("key", "TICK-1001"))))
         ticket.title = str(data.get("title", data.get("summary", data.get("subject", "IT Service Incident"))))
         ticket.category = str(data.get("category", "General IT"))
         ticket.environment = str(data.get("environment", "Corporate Environment"))
@@ -491,16 +579,41 @@ class TicketParser:
         errors, commands = self._extract_errors_and_commands(raw_str)
         ticket.error_codes = errors
         ticket.commands = commands
-        ticket.symptoms.append(str(data.get("symptoms", data.get("description", "Reported service disruption."))))
+
+        desc_raw = data.get("description_text", data.get("description", data.get("symptoms", "")))
+        if isinstance(desc_raw, str) and desc_raw:
+            ticket.symptoms.append(self._clean_servicenow_markup(desc_raw))
+        elif isinstance(desc_raw, list):
+            for item in desc_raw:
+                if isinstance(item, str) and item:
+                    ticket.symptoms.append(self._clean_servicenow_markup(item))
+
+        convs = data.get("conversations", data.get("comments", []))
+        if isinstance(convs, list):
+            for c in convs:
+                if isinstance(c, dict):
+                    c_body = c.get("body_text", c.get("body", ""))
+                    if isinstance(c_body, str) and c_body:
+                        for line in c_body.splitlines():
+                            clean = self._clean_step(line)
+                            if clean and (line.strip().startswith(("1.", "2.", "3.", "4.", "5.")) or any(k in clean.lower() for k in ["resolved", "fixed", "rebooted", "cleared", "restarted", "command", "executed", "action"])):
+                                ticket.resolution_steps.append(clean)
 
         if "resolution" in data:
-            ticket.resolution_steps.append(str(data["resolution"]))
+            res_val = data["resolution"]
+            if isinstance(res_val, str):
+                ticket.resolution_steps.append(res_val)
+            elif isinstance(res_val, list):
+                ticket.resolution_steps.extend(str(r) for r in res_val)
         if "cause" in data:
             ticket.cause = str(data["cause"])
         ticket.title = self._derive_title(ticket, raw_str)
         return ticket
 
     def _parse_plaintext(self, content: str) -> TicketData:
+        # Strip ANSI escape sequences if raw terminal logs are pasted
+        content = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", content)
+
         ticket = TicketData()
         ticket.raw_notes = content
         errors, commands = self._extract_errors_and_commands(content)
@@ -511,7 +624,7 @@ class TicketParser:
         current_section = "header"
 
         symptoms_header_re = re.compile(
-            r"^(?:INITIAL\s+)?(?:SYMPTOMS?|DESCRIPTION(?:\s+OF\s+PROBLEM)?|ISSUE|PROBLEM(?:\s+DESCRIPTION)?):?\s*$",
+            r"^(?:INITIAL\s+)?(?:SYMPTOMS?|DESCRIPTION(?:\s+OF\s+PROBLEM)?|DETAILED\s+DESCRIPTION|ISSUE|PROBLEM(?:\s+DESCRIPTION)?):?\s*$",
             re.IGNORECASE
         )
         cause_header_re = re.compile(
@@ -519,7 +632,7 @@ class TicketParser:
             re.IGNORECASE
         )
         resolution_header_re = re.compile(
-            r"^(?:WORK\s+NOTES(?:\s*&|\s+AND)?\s+TROUBLESHOOTING|TECHNICAL\s+NOTES(?:\s*&|\s+AND)?\s+RESOLUTION|REMEDIATION(?:\s+EXECUTED)?|RESOLUTION(?:\s+STEPS)?|ACTIONS?\s+TAKEN|STEPS?\s+TAKEN):?\s*$",
+            r"^(?:WORK\s+NOTES(?:\s*&|\s+AND)?\s+TROUBLESHOOTING|TECHNICAL\s+NOTES(?:\s*&|\s+AND)?\s+RESOLUTION|REMEDIATION(?:\s+EXECUTED)?|RESOLUTION(?:\s+STEPS|\s+DETAILS)?|WORK\s+LOG(?:\s+SUMMARY)?|ACTIONS?\s+TAKEN|STEPS?\s+TAKEN):?\s*$",
             re.IGNORECASE
         )
         verification_header_re = re.compile(
@@ -538,7 +651,7 @@ class TicketParser:
             lower_line = line_str.lower()
 
             # Check for inline sections (header and value on the same line, e.g. 'Symptoms: something')
-            if lower_line.startswith(("initial symptoms:", "symptoms:", "description:", "description of problem:", "issue:")):
+            if lower_line.startswith(("initial symptoms:", "symptoms:", "description:", "description of problem:", "detailed description:", "issue:")):
                 current_section = "symptoms"
                 collecting_cause_block = False
                 val = line_str.split(":", 1)[1].strip()
@@ -556,7 +669,7 @@ class TicketParser:
                     if clean:
                         ticket.cause = clean
                 continue
-            elif lower_line.startswith(("remediation executed:", "remediation:", "resolution:", "resolution steps:")):
+            elif lower_line.startswith(("remediation executed:", "remediation:", "resolution:", "resolution steps:", "resolution details:", "work log:", "work log summary:")):
                 current_section = "resolution"
                 collecting_cause_block = False
                 val = line_str.split(":", 1)[1].strip()
@@ -641,6 +754,27 @@ class TicketParser:
                 if clean:
                     ticket.verification = f"{ticket.verification} {clean}".strip() if ticket.verification else clean
 
+        # Fallback symptom extraction if no explicit symptoms section was found
+        if not ticket.symptoms:
+            for line in lines:
+                l_str = line.strip()
+                if not l_str or l_str.startswith("===") or any(l_str.lower().startswith(p) for p in ["ticket:", "incident:", "subject:", "title:", "category:", "device:", "assigned"]):
+                    continue
+                clean = self._clean_step(l_str)
+                if clean:
+                    ticket.symptoms.append(clean)
+                    break
+
+        # Fallback resolution step extraction if no explicit resolution section was found
+        if not ticket.resolution_steps:
+            for line in lines:
+                l_str = line.strip()
+                if not l_str or l_str.startswith("==="):
+                    continue
+                clean = self._clean_step(l_str)
+                if clean and (re.match(r"^(?:\d+[\.\)]|[-*])\s+", l_str) or any(act in l_str.lower() for act in ["restarted", "rebooted", "cleared", "deleted", "installed", "executed", "updated", "reset", "ran ", "applied"])):
+                    ticket.resolution_steps.append(clean)
+
         if cause_lines and not ticket.cause:
             ticket.cause = " ".join(cause_lines)
         if not ticket.cause:
@@ -679,15 +813,33 @@ class KCSArticleGenerator:
         ]
         if ticket.error_codes:
             for err in ticket.error_codes[:2]:
-                aliases.append(f"Fix error {err} in {ticket.category}")
-        while len(aliases) < 5:
-            aliases.append(f"Troubleshoot {clean_title} issue in {ticket.environment}")
+                if err.lower() not in clean_title.lower():
+                    aliases.append(f"Fix error {err} in {ticket.category}")
+                else:
+                    aliases.append(f"Troubleshoot {err} resolution guide")
+        templates = [
+            f"Troubleshoot {clean_title} issue in {ticket.environment}",
+            f"{clean_title} troubleshooting and remediation steps",
+            f"Fix {clean_title} in {ticket.category}",
+            f"Step by step guide to resolve {clean_title}",
+            f"{clean_title} common causes and resolution"
+        ]
+        for tmpl in templates:
+            if tmpl not in aliases:
+                aliases.append(tmpl)
+            if len(aliases) >= 5:
+                break
         return aliases[:5]
 
     def _determine_audience(self, ticket: TicketData) -> str:
-        if any(cmd for cmd in ticket.commands if "Suspend-BitLocker" in cmd or "pnputil" in cmd or "certutil" in cmd):
+        adv_terms = [
+            "Suspend-BitLocker", "pnputil", "certutil", "0xc0000005", "Event ID",
+            "driver", "kernel", "crash dump", "heap", "registry", "reg add", "systemctl", "chmod"
+        ]
+        raw_combined = f"{ticket.raw_notes} {' '.join(ticket.commands)}".lower()
+        if any(term.lower() in raw_combined for term in adv_terms):
             return "Tier-2 / Tier-3 Systems Engineering"
-        elif ticket.commands:
+        elif ticket.commands or ticket.error_codes:
             return "Tier-1 Service Desk"
         return "End-User Self-Service"
 
@@ -716,7 +868,7 @@ class KCSArticleGenerator:
         resolution_lines = []
         step_num = 1
         for step in ticket.resolution_steps:
-            clean_step = step.strip("- *#")
+            clean_step = re.sub(r"^[\s\-*#]+", "", step).rstrip()
             if clean_step:
                 resolution_lines.append(f"{step_num}. {clean_step}")
                 step_num += 1
