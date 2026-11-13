@@ -1,6 +1,17 @@
 ---
 name: ticket-to-kb-article
-description: Transforms unstructured IT service desk ticket resolution notes into standardized, PII-sanitized, search-optimized Knowledge-Centered Service (KCS v6) knowledge base articles for ServiceNow, Confluence, and Zendesk.
+description: >-
+  Transforms unstructured IT service desk ticket resolution notes into standardized,
+  PII-sanitized, search-optimized Knowledge-Centered Service (KCS v6) knowledge base articles for
+  ServiceNow, Confluence, and Zendesk. Use when turning a resolved ticket into a reusable KB
+  article, writing up a fix for a knowledge base, sanitizing ticket notes for publication, or
+  standardizing existing articles to KCS v6 structure.
+license: MIT
+version: 1.0.0
+metadata:
+  standard: agentskills.io
+  dependencies: none (Python standard library only)
+  access: read-only collectors; no state is modified on target systems
 ---
 
 # Ticket-to-Knowledge-Base Article Writer (KCS v6 Standard)
@@ -115,3 +126,36 @@ python scripts/ticket_to_kb.py -i tests/fixtures/fixture-vpn-mfa-cert-expired.tx
 # Generate all output formats simultaneously
 python scripts/ticket_to_kb.py -i tests/fixtures/fixture-bitlocker-tpm-lockout.txt -f all -o kb-bitlocker
 ```
+
+---
+
+## Bundled Resources
+
+- **KCS v6 Standard Guide:** [`references/kcs-v6-template-guide.md`](references/kcs-v6-template-guide.md) — The Knowledge-Centered Service v6 article standard and template contract. **Consult before composing or restructuring any article.**
+- **ITSM Field Mappings:** [`references/itsm-field-mappings.md`](references/itsm-field-mappings.md) — Platform schema and field mapping reference for ServiceNow, Confluence, and Zendesk. **Consult when targeting a specific platform's import format.**
+
+---
+
+## Data Handling & Sanitization
+
+Sanitization runs **client-side, before any output is produced**, so credentials and
+personal data are removed on the operator's machine rather than being sent to a model
+or pasted into a ticket.
+
+Two layers apply:
+
+1. This skill's own domain-aware masking (hostnames, accounts, and the identifiers
+   specific to this domain).
+2. A shared residual pass, [`scripts/sanitizer.py`](scripts/sanitizer.py), vendored
+   identically across every skill in the library. It is the common floor: private keys,
+   cloud provider keys, JWTs and bearer tokens, connection-string passwords, assigned
+   secrets, emails, IPv4/IPv6 addresses, MAC addresses, GUIDs, SSNs, payment card
+   numbers, and phone numbers.
+
+The contract is enforced by `tests/sanitizer_conformance_test.py`, which runs the same
+adversarial corpus in every skill. Documentation placeholders (RFC 5737/3849 addresses,
+RFC 7042 MAC ranges, `example.com` names, and existing `[REDACTED-*]` tokens) are
+preserved, so the pass is safe to apply more than once.
+
+Sanitization is thorough and tested, but it is not a substitute for reading output
+before sharing it outside your organization.

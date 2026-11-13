@@ -79,7 +79,27 @@ class TestExtremeEdgeCases(unittest.TestCase):
         md = self.generator.format_markdown(ticket, sanitize=True)
         t1 = time.perf_counter()
         elapsed = t1 - t0
-        self.assertLess(elapsed, 8.0, f"5MB payload took {elapsed:.2f}s, expected < 8.0s")
+        # Budget re-baselined from 8.0s to 20.0s.
+        #
+        # Why: this skill now runs the shared residual sanitization pass
+        # (scripts/sanitizer.py), which adds 20 credential/PII redaction classes on top
+        # of this skill's own masking. Measured by A/B against an isolated tree with
+        # that pass replaced by a no-op, it adds ~1.6s to this workload, roughly +25%.
+        # The original 8.0s budget left under 2s of headroom over the pre-existing
+        # baseline, so that addition consumed it.
+        #
+        # Deliberately expressed as a ratio, not absolutes: wall-clock here moved by
+        # ~3x between runs purely from other load on the measuring machine, so any
+        # absolute figure quoted in a comment would be misleading. 20.0s is chosen to
+        # stay green on a shared CI runner (typically slower than a dev box) while
+        # still failing loudly on quadratic blow-up over 5 MB.
+        #
+        # This is NOT the backstop against pathological backtracking. That is enforced
+        # by the tight budgets in E01-E03 above and by
+        # tests/sanitizer_conformance_test.py::test_redos_resilience_on_hostile_input,
+        # which were kept strict and which did catch a real ReDoS defect in the
+        # shared pass.
+        self.assertLess(elapsed, 20.0, f"5MB payload took {elapsed:.2f}s, expected < 20.0s")
         self.assertIn("## Issue Symptoms", md)
 
     def test_e05_binary_headers_and_null_bytes(self) -> None:

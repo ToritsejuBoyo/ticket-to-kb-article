@@ -1,10 +1,13 @@
 # Ticket-to-Knowledge-Base Article Writer (`ticket-to-kb-article`)
 
-[![Standard: KCS v6](https://img.shields.io/badge/Standard-KCS%20v6-blue.svg)](https://www.serviceinnovation.org/kcs/)
+
+[![tests](https://github.com/ToritsejuBoyo/ticket-to-kb-article/actions/workflows/tests.yml/badge.svg)](https://github.com/ToritsejuBoyo/ticket-to-kb-article/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)]()
+[![Dependencies](https://img.shields.io/badge/dependencies-zero%20(stdlib%20only)-brightgreen.svg)](CONTRIBUTING.md)
+[![Security](https://img.shields.io/badge/security-read--only%20%7C%20no%20egress-informational.svg)](SECURITY.md)
+[![Standard](https://img.shields.io/badge/standard-agentskills.io-blueviolet.svg)](https://agentskills.io)
 [![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero%20(Stdlib)-brightgreen.svg)]()
-[![Platform: Cross-Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
-[![Enterprise Compliance: SOC2 / ISO 27001](https://img.shields.io/badge/Compliance-Zero%20PII%20Leakage-success.svg)]()
 
 > Transforms unstructured IT service desk resolution notes (ServiceNow, Jira Service Management, Zendesk, raw text) into standardized, PII-sanitized, search-optimized Knowledge-Centered Service (KCS v6) articles.
 
