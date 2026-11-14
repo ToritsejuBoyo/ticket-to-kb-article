@@ -3,7 +3,7 @@
 
 [![tests](https://github.com/ToritsejuBoyo/ticket-to-kb-article/actions/workflows/tests.yml/badge.svg)](https://github.com/ToritsejuBoyo/ticket-to-kb-article/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)]()
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-zero%20(stdlib%20only)-brightgreen.svg)](CONTRIBUTING.md)
 [![Security](https://img.shields.io/badge/security-read--only%20%7C%20no%20egress-informational.svg)](SECURITY.md)
 [![Standard](https://img.shields.io/badge/standard-agentskills.io-blueviolet.svg)](https://agentskills.io)
@@ -39,7 +39,7 @@ Every day, IT service desks resolve hundreds of recurring hardware, software, an
 ### 4. Why IT Leadership Approves
 - **Cost Reduction via Ticket Deflection:** Standardized knowledge articles reduce mean time to resolution (MTTR) by up to 40% and enable Tier-1 shift-left deflection, preventing repeat ticket creation.
 - **Strict Data Privacy and Zero PII Leakage:** Built-in automated sanitization removes all employee and network identifiers before any documentation is stored or passed to AI language models.
-- **Zero Infrastructure Footprint:** Operates locally on existing technician workstations using standard Python 3.9+ or PowerShell with no third-party package installations, no Docker containers, and no administrative privileges required.
+- **Zero Infrastructure Footprint:** Operates locally on existing technician workstations using standard Python 3.10+ or PowerShell with no third-party package installations, no Docker containers, and no administrative privileges required.
 - **Direct ITSM Integration:** Generates dual output: clean GitHub-flavored Markdown for technical repositories and HTML/JSON payloads tailored for ServiceNow Knowledge (`kb_knowledge`) and Atlassian Confluence.
 
 ---
